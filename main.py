@@ -284,10 +284,14 @@ class reflection_pattern:
         queue = set()
         data = (pos[0] % self.scale[0], pos[1] % self.scale[1])
         value = self.data[int(data[0]/self.scale[0])][int(data[1]/self.scale[1])]
-        top = 0 < data[1] - value*data[2] < sum(self.scale)/2
-        queue.add(pos)
+        top = 0 < data[0] - value*data[1] < sum(self.scale)/2
+        queue.add((pos[0], pos[1], top)
         screen = pygame.display.get_surface()
         ref_color = screen.get_at(pos)
+        """
+        for logic of calculating adjacent positions: see doc folder
+        could've been done clearer, I guess 
+        """
         if ref_color != self.fore_color:
             screen.set_at(pos, color)
             if ref_color != color:
