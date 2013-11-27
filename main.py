@@ -4,8 +4,6 @@
 TODO:
  * clickable input interface
  * GUI to interact with user
- * rewriting flood
- * color picker
  * refactor mouse_click and keyboard_click
 """
 
@@ -14,7 +12,7 @@ __author__ = 'sukhmel'
 import sys
 import pygame
 
-class reflection_pattern:
+class ReflectionPattern:
 
     def __init__(self):
         """
@@ -27,22 +25,19 @@ class reflection_pattern:
         self.scale = (20, 20)
         self.size = (0, 0)
 
-        self.fore_color = (0, 0, 0)
-        self.click_color = 0
-        self.back_color = (255, 255, 255)
+        self.palette = []
+        color_values = (0, 50, 100, 150, 200, 255)
+        for r in color_values:
+            for g in color_values:
+                for b in color_values:
+                    self.palette.append((r, g, b))
 
-        self.palette = [(240,   0,   0),
-                        (  1,   1,   1),
-                        (255, 255,   0),
-                        (255,   0, 255),
-                        (0,   255, 255),
-                        (200, 200,   0),
-                        (200,   0, 200),
-                        (  0, 200, 200),
-                        (  0,   0, 254),
-                        (  0, 254,   0),
-                        (190, 190, 190)]
+        self.fore_color  = 0
+        self.click_color = 3
+        self.back_color  = len(self.palette) - 1
 
+        self.colorpicker = 20
+        
         self.proceed = True
         self.draw    = True
         self.data = [] # [ [1(\),0( ),-1(/)], line color, top color, bottom color, is rendered flag
@@ -64,7 +59,11 @@ class reflection_pattern:
         if self.base != new_base:
             self.proceed = True
             self.base = new_base
-            self.data = [[[0, self.fore_color, self.back_color, self.back_color, False]
+            self.data = [[[0,                               # line type: 0 - no line, 1 is \, -1 is /
+                           self.palette[self.fore_color],   # line color
+                           self.palette[self.back_color],   # upper color
+                           self.palette[self.back_color],   # lower color
+                           False]                           # is rendered
                             for y in range(self.base[1])]
                             for x in range(self.base[0])]
             self.pattern_step = 0
@@ -77,7 +76,7 @@ class reflection_pattern:
                     self.data[x][y][4] = False
 
         self.draw = True
-        self.size = (self.base[0]*self.scale[0], self.base[1]*self.scale[1])
+        self.size = (self.base[0]*self.scale[0], self.base[1]*self.scale[1] + self.colorpicker)
         self.window = pygame.display.set_mode(self.size)
         self.set_caption()
         self.repaint()
@@ -130,7 +129,7 @@ class reflection_pattern:
                 if event.button == 5:
                     self.change_click_color(-1)
                 if event.button == 3:
-                    self.mouseclick(event.pos, self.back_color)
+                    self.mouseclick(event.pos, self.palette[self.back_color])
 
     def execute(self):
         """
@@ -138,8 +137,13 @@ class reflection_pattern:
         """
         while 1:
             self.user_input(pygame.event.get())
+            if self.draw:
+                pygame.display.get_surface().blit(self.paint_colorpicker(), (0,0))
+                pygame.display.flip()
+
             if self.step > 0:
                 pygame.time.wait( self.step )
+
             if self.proceed:
                 pos = self.advance()
                 if self.step > 0:
@@ -156,14 +160,18 @@ class reflection_pattern:
         :return: changed data's position. paint should be later called on this position
         """
         value = self.direction[0]*self.direction[1]
-        color = self.fore_color
+        color = self.palette[self.fore_color]
         if isinstance(self.pattern[self.pattern_step], tuple):
-            color = self.pattern[self.pattern_step]
+            if len(self.pattern[self.pattern_step]) == 1:
+                color = self.palette[self.pattern[self.pattern_step][0]]
+            else:
+                color = self.pattern[self.pattern_step]
+
         elif not self.pattern[self.pattern_step]:
             value = 0
 
         # field data:      at given coordinates, [1(\)0( )-1(/)], line,  top,           bottom, already rendered
-        self.data[self.position[0]][self.position[1]] = [value, color, self.back_color, self.back_color, False]
+        self.data[self.position[0]][self.position[1]] = [value, color, self.palette[self.back_color], self.palette[self.back_color], False]
         self.pattern_step = (self.pattern_step + 1) % len(self.pattern)
 
         new_position = list(self.position)
@@ -199,6 +207,22 @@ class reflection_pattern:
             pygame.display.flip()
         else:
             self.draw = False
+
+    def paint_colorpicker(self, palette = None):
+        if palette is None:
+            palette = self.palette
+
+        screen = pygame.display.get_surface()
+        width = self.size[0]/len(palette)
+        for index in range(len(self.palette)):
+            pygame.draw.rect(screen,
+                             palette[index],
+                             pygame.Rect(
+                                 index*width,
+                                 self.size[1] - self.colorpicker,
+                                 width + 1,
+                                 self.colorpicker))
+        return screen
 
     def paint(self, pos = None, flip = True, field = None):
         """
@@ -266,11 +290,18 @@ class reflection_pattern:
         :param color:
         :return:
         """
-        if not pygame.display.get_surface().get_at(pos) == color:
+        if pos[1] < self.base[1]*self.scale[1]:
             if color is None:
-                color = self.palette[self.click_color]
-            field = self.flood(pos, color)
+                if isinstance(self.click_color, int):
+                    color = self.palette[self.click_color]
+                else:
+                    color = self.click_color
+
+            self.flood(pos, color)
             self.repaint()
+        else:
+            self.click_color = pygame.display.get_surface().get_at(pos)[:-1]
+            self.set_caption()
 
     def get_adjacent_to(self, pos, direction):
         """
@@ -329,25 +360,24 @@ class reflection_pattern:
 
         #for logic of calculating adjacent positions: see doc folder
         #could've been done clearer, I guess
-        if ref_color != self.fore_color:
-            if ref_color != color:
-                self.data[place[0]][place[1]][top]  = color
-                self.data[place[0]][place[1]][4]    = False
-                while 1:
-                    try:
-                        point = queue.pop()
-                    except KeyError:
-                        break
-                    else:
-                        for i in ['h', 'v', 's']:
-                            try:
-                                temp = self.get_adjacent_to(point, i)
-                                if self.data[temp[0]][temp[1]][temp[2]] == ref_color:
-                                    queue.add(temp)
-                                    self.data[temp[0]][temp[1]][temp[2]] = color
-                                    self.data[temp[0]][temp[1]][4] = False
-                            except IndexError:
-                                pass
+        if ref_color != color:
+            self.data[place[0]][place[1]][top]  = color
+            self.data[place[0]][place[1]][4]    = False
+            while 1:
+                try:
+                    point = queue.pop()
+                except KeyError:
+                    break
+                else:
+                    for i in ['h', 'v', 's']:
+                        try:
+                            temp = self.get_adjacent_to(point, i)
+                            if self.data[temp[0]][temp[1]][temp[2]] == ref_color:
+                                queue.add(temp)
+                                self.data[temp[0]][temp[1]][temp[2]] = color
+                                self.data[temp[0]][temp[1]][4] = False
+                        except IndexError:
+                            pass
         return screen
 
     def change_click_color(self, delta):
@@ -357,8 +387,10 @@ class reflection_pattern:
     def set_caption(self):
         pygame.display.set_caption(
             '%i x %i ' % self.base + '@ (%i, %i) ' % self.scale
-            + ', color is (%i, %i, %i)' % self.palette[self.click_color])
+            + ', color is (%i, %i, %i)' %
+            (isinstance(self.click_color, int) and
+                [self.palette[self.click_color]] or [self.click_color])[0])
 
 if __name__ == "__main__":
-    game = reflection_pattern();
+    game = ReflectionPattern();
     game.execute()
