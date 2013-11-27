@@ -30,7 +30,6 @@ class reflection_pattern:
         self.fore_color = (0, 0, 0)
         self.click_color = 0
         self.back_color = (255, 255, 255)
-        self.mouse_position = (-1, -1)
 
         self.palette = [(240,   0,   0),
                         (  1,   1,   1),
@@ -45,13 +44,14 @@ class reflection_pattern:
                         (190, 190, 190)]
 
         self.proceed = True
+        self.draw    = True
         self.data = [] # [ [1(\),0( ),-1(/)], line color, top color, bottom color, is rendered flag
 
         self.pattern_step = 0
         self.position = (0, 0)
         self.direction = [1, 1]
         self.pattern = [] #1, 1, 0, 1, 1, 1, 0 # 1, 1, 0, 1, 0, 0
-        self.window = pygame.display.set_mode(self.size)
+        self.window = 0
 
         self.reset((19, 21))
 
@@ -74,16 +74,12 @@ class reflection_pattern:
         else:
             for y in range(self.base[1]):
                 for x in range(self.base[0]):
-                    self.data[x][y][4] = False;
+                    self.data[x][y][4] = False
 
+        self.draw = True
         self.size = (self.base[0]*self.scale[0], self.base[1]*self.scale[1])
         self.window = pygame.display.set_mode(self.size)
         self.set_caption()
-        field = pygame.Surface(pygame.display.get_surface().get_size())
-        field = field.convert()
-        field.fill(self.back_color)
-        pygame.display.get_surface().blit(field, (0, 0))
-        pygame.display.flip()
         self.repaint()
 
     def user_input(self, events):
@@ -149,7 +145,10 @@ class reflection_pattern:
                 if self.step > 0:
                     self.paint(pos, True)
             if not self.proceed:
-                self.paint()
+                if self.draw:
+                    self.paint()
+                else:
+                    pygame.time.wait(100)
 
     def advance(self):
         """
@@ -198,6 +197,8 @@ class reflection_pattern:
         if field is not None:
             pygame.display.get_surface().blit(field, (0,0))
             pygame.display.flip()
+        else:
+            self.draw = False
 
     def paint(self, pos = None, flip = True, field = None):
         """
@@ -211,6 +212,7 @@ class reflection_pattern:
             self.repaint()
         else:
             if self.data[pos[0]][pos[1]] is not None and not self.data[pos[0]][pos[1]][4]:
+                self.draw = True
                 if field is None:
                     field = pygame.display.get_surface()
                 value = self.data[pos[0]][pos[1]][0]
@@ -229,19 +231,19 @@ class reflection_pattern:
                     points = [corners[1],
                               corners[2]]
 
-                upper_points = [(points[0][0] + value, points[0][1]),
+                upper_points = [(points[0][0], points[0][1]),
                                (),
-                               (points[1][0], points[1][1] - 1)]
-                lower_points = [(points[0][0], points[0][1] + 1),
+                               (points[1][0], points[1][1])]
+                lower_points = [(points[0][0], points[0][1]),
                                 (),
-                                (points[1][0] - value, points[1][1])]
+                                (points[1][0], points[1][1])]
 
                 if value == 1:
                     upper_points[1] = corners[1]
                     lower_points[1] = corners[2]
                 else:
                     upper_points[1] = corners[0]
-                    lower_points[1] = corners[2]
+                    lower_points[1] = corners[3]
 
                 pygame.draw.polygon(field, self.data[pos[0]][pos[1]][2], upper_points)
                 pygame.draw.polygon(field, self.data[pos[0]][pos[1]][3], lower_points)
@@ -264,14 +266,48 @@ class reflection_pattern:
         :param color:
         :return:
         """
-        if self.mouse_position != pos or \
-            color != pygame.display.get_surface().get_at(pos):
+        if not pygame.display.get_surface().get_at(pos) == color:
             if color is None:
                 color = self.palette[self.click_color]
             field = self.flood(pos, color)
-            self.mouse_position = pos
-            pygame.display.get_surface().blit(field, (0,0))
-            pygame.display.flip()
+            self.repaint()
+
+    def get_adjacent_to(self, pos, direction):
+        """
+        get adjacent field cell position, including top/bottom index
+        :raises IndexError: if adjacent position is outside of the field or top is not connected with bottom
+        :param pos:  current cell index
+        :param direction: 's' - inside cell, 'h' - horizontal, 'v' - vertical
+        :return:     (x, y, top)
+        """
+        result = [pos[0], pos[1], -1]
+
+        # we go to bottom of upper cell if we are on top, or to top of lower cell otherwise
+        if direction is 'v':
+            delta = (pos[2] == 2 and [-1] or [+1])[0]
+            result[1] += delta
+            result[2]  = int((5 - delta)/2)
+
+        # if top and bottom are connected, we go to other part of same cell
+        if direction is 's':
+            if self.data[pos[0]][pos[1]][0] == 0:
+                result[2] = 5 - pos[2]
+            else:
+                raise IndexError
+
+        # we go to different directions depending on current line state
+        if direction is 'h':
+            value = (self.data[pos[0]][pos[1]][0] == -1 and [-1] or [1])[0]
+            step = (pos[2] == 2 and [value] or [-value])[0]
+            adj_value = (self.data[pos[0] + step][pos[1]][0] == -1 and [-1] or [1])[0]
+            result[0] += step
+            result[2] = (adj_value == step and [3] or [2])[0]
+
+        # check for boundaries. Will throw IndexError if not correct
+        if -1 < result[0] < self.base[0] and -1 < result[1] < self.base[1]:
+            return tuple(result)
+        else:
+            raise IndexError
 
     def flood(self, pos, color):
         """
@@ -282,34 +318,34 @@ class reflection_pattern:
         :return:      modified screen that was used for painting
         """
         queue = set()
-        data = (pos[0] % self.scale[0], pos[1] % self.scale[1])
-        value = self.data[int(data[0]/self.scale[0])][int(data[1]/self.scale[1])]
-        top = 0 < data[0] - value*data[1] < sum(self.scale)/2
-        queue.add((pos[0], pos[1], top)
+        place = (int(pos[0]/self.scale[0]), int(pos[1]/self.scale[1]))
+        data_point = self.data[int(place[0]/self.scale[0])][int(place[1]/self.scale[1])]
+        value = (data_point[0] == -1 and [-1] or [1])[0]
+        # top's value is index of corresponding color in data; 2 is top, 3 is bottom
+        top = ((0 < pos[0] % self.scale[0] - value*(pos[1] % self.scale[1]) < sum(self.scale)/2) and [2] or [3])[0]
+        ref_color = data_point[top]
+        queue.add((place[0], place[1], top))
         screen = pygame.display.get_surface()
-        ref_color = screen.get_at(pos)
-        """
-        for logic of calculating adjacent positions: see doc folder
-        could've been done clearer, I guess 
-        """
+
+        #for logic of calculating adjacent positions: see doc folder
+        #could've been done clearer, I guess
         if ref_color != self.fore_color:
-            screen.set_at(pos, color)
             if ref_color != color:
+                self.data[place[0]][place[1]][top]  = color
+                self.data[place[0]][place[1]][4]    = False
                 while 1:
                     try:
                         point = queue.pop()
                     except KeyError:
                         break
                     else:
-                        adjacent = [(point[0] - 1, point[1]),
-                                    (point[0] + 1, point[1]),
-                                    (point[0], point[1] - 1),
-                                    (point[0], point[1] + 1)]
-                        for i in range(4):
+                        for i in ['h', 'v', 's']:
                             try:
-                                if screen.get_at(adjacent[i]) == ref_color:
-                                    queue.add(adjacent[i])
-                                    screen.set_at(adjacent[i], color)
+                                temp = self.get_adjacent_to(point, i)
+                                if self.data[temp[0]][temp[1]][temp[2]] == ref_color:
+                                    queue.add(temp)
+                                    self.data[temp[0]][temp[1]][temp[2]] = color
+                                    self.data[temp[0]][temp[1]][4] = False
                             except IndexError:
                                 pass
         return screen
