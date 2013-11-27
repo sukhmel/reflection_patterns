@@ -292,15 +292,12 @@ class ReflectionPattern:
         """
         if pos[1] < self.base[1]*self.scale[1]:
             if color is None:
-                if isinstance(self.click_color, int):
-                    color = self.palette[self.click_color]
-                else:
-                    color = self.click_color
-
+                color = self.palette[self.click_color]
+                
             self.flood(pos, color)
             self.repaint()
         else:
-            self.click_color = pygame.display.get_surface().get_at(pos)[:-1]
+            self.click_color = self.palette.index(pygame.display.get_surface().get_at(pos)[:-1])
             self.set_caption()
 
     def get_adjacent_to(self, pos, direction):
@@ -388,8 +385,7 @@ class ReflectionPattern:
         pygame.display.set_caption(
             '%i x %i ' % self.base + '@ (%i, %i) ' % self.scale
             + ', color is (%i, %i, %i)' %
-            (isinstance(self.click_color, int) and
-                [self.palette[self.click_color]] or [self.click_color])[0])
+            self.palette[self.click_color])
 
 if __name__ == "__main__":
     game = ReflectionPattern();
