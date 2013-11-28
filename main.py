@@ -26,7 +26,7 @@ class ReflectionPattern:
         self.size = (0, 0)
 
         self.palette = []
-        color_values = (0, 50, 100, 150, 200, 255)
+        color_values = (0, 100, 200, 255)
         for r in color_values:
             for g in color_values:
                 for b in color_values:
@@ -37,7 +37,7 @@ class ReflectionPattern:
         self.back_color  = len(self.palette) - 1
 
         self.colorpicker = 20
-        
+
         self.proceed = True
         self.draw    = True
         self.data = [] # [ [1(\),0( ),-1(/)], line color, top color, bottom color, is rendered flag
@@ -213,7 +213,7 @@ class ReflectionPattern:
             palette = self.palette
 
         screen = pygame.display.get_surface()
-        width = self.size[0]/len(palette)
+        width = pygame.display.get_surface().get_size()[0]/len(palette)
         for index in range(len(self.palette)):
             pygame.draw.rect(screen,
                              palette[index],
@@ -293,7 +293,7 @@ class ReflectionPattern:
         if pos[1] < self.base[1]*self.scale[1]:
             if color is None:
                 color = self.palette[self.click_color]
-                
+
             self.flood(pos, color)
             self.repaint()
         else:
@@ -347,7 +347,7 @@ class ReflectionPattern:
         """
         queue = set()
         place = (int(pos[0]/self.scale[0]), int(pos[1]/self.scale[1]))
-        data_point = self.data[int(place[0]/self.scale[0])][int(place[1]/self.scale[1])]
+        data_point = self.data[place[0]][place[1]]
         value = (data_point[0] == -1 and [-1] or [1])[0]
         # top's value is index of corresponding color in data; 2 is top, 3 is bottom
         top = ((0 < pos[0] % self.scale[0] - value*(pos[1] % self.scale[1]) < sum(self.scale)/2) and [2] or [3])[0]
