@@ -27,7 +27,7 @@ class ReflectionPattern:
 
     def __init__(self
                  , base             = (21,19)
-                 , scale            = (2,2)
+                 , scale            = (5,5)
                  , pattern          = [(48,), (48,), 0, (13,), 0]
                  , step             = 0
                  , start_position   = (0,0)
@@ -61,20 +61,21 @@ class ReflectionPattern:
         self.direction  = 0
         self.position   = 0
         self.patt_step  = 0
+        self.color_shown= 0
 
         self.palette    = []
-        color_values = (0, 100, 200, 255)
+        color_values = (0, 50, 100, 200, 255)
         for r in color_values:
             for g in color_values:
                 for b in color_values:
                     self.palette.append((r, g, b))
 
         self.fore_color  = 0
-        self.click_color = 3
-        self.back_color  = len(self.palette) - 1
+        self.click_color = 105
+        self.back_color  = -1
 
-        self.color_picker_height = 20
-
+        self.color_picker_height = 10
+        self.color_picker_rows   = len(color_values)
         self.proceed = True
         self.draw    = True
         self.data = [] # [ [1(\),0( ),-1(/)], line color, top color, bottom color, is rendered flag
@@ -108,12 +109,17 @@ class ReflectionPattern:
                     self.data[x][y][4] = False
 
         self.draw = True
-        self.size = (self.base[0]*self.scale[0], self.base[1]*self.scale[1] + self.color_picker_height)
-        pygame.display.set_mode(self.size)
+        self.size = (self.base[0]*self.scale[0],
+                     self.base[1]*self.scale[1])
+        pygame.display.set_mode((self.size[0], self.size[1] + self.color_picker_height))
+        field = pygame.Surface(pygame.display.get_surface().get_size())
+        field = field.convert()
+        field.fill(self.back_color)
+        pygame.display.get_surface().blit(field, (0, 0))
+        pygame.display.flip()
         self.set_caption()
         self.repaint()
-        pygame.display.get_surface().blit(self.paint_colorpicker(), (0,0))
-        pygame.display.flip()
+        self.color_shown = self.paint_color_picker(picker = False)
 
     def user_input(self, events):
         """
@@ -156,14 +162,7 @@ class ReflectionPattern:
                     self.step = min([500, self.step])
 
             if  event.type == pygame.MOUSEBUTTONUP:
-                if event.button == 1:
-                    self.mouseclick(event.pos)
-                if event.button == 4:
-                    self.change_click_color(+1)
-                if event.button == 5:
-                    self.change_click_color(-1)
-                if event.button == 3:
-                    self.mouseclick(event.pos, self.palette[self.back_color])
+                self.mouse_click(event)
 
     def execute(self):
         """
@@ -242,21 +241,50 @@ class ReflectionPattern:
         else:
             self.draw = False
 
-    def paint_colorpicker(self, palette = None):
+    def paint_color_picker(self, picker = True, palette = None):
+        """
+        paint color chooser or current click color
+        :param picker:  true if chooser should be shown
+        :param palette: color palette to draw, self.palette by default
+        :return: true if color is displayed, false if picker is displayed
+        """
         if palette is None:
             palette = self.palette
 
-        screen = pygame.display.get_surface()
-        width = pygame.display.get_surface().get_size()[0]/len(palette)
-        for index in range(len(self.palette)):
-            pygame.draw.rect(screen,
-                             palette[index],
-                             pygame.Rect(
-                                 index*width,
-                                 self.size[1] - self.color_picker_height,
-                                 width + 1,
-                                 self.color_picker_height))
-        return screen
+        screen = pygame.Surface.convert(pygame.display.get_surface())
+        resized = False
+
+        if picker:
+            rows = self.color_picker_rows
+        else:
+            rows = 1
+        size = (self.size[0], self.size[1] + self.color_picker_height * rows)
+        if pygame.display.get_surface().get_size() != size:
+            pygame.display.set_mode(size)
+            resized = True
+
+        pick_box = pygame.Surface((self.size[0], self.color_picker_height * rows)).convert()
+
+        if picker:
+            width = pick_box.get_size()[0] * \
+                    self.color_picker_rows / len(palette)
+            columns = len(palette)/self.color_picker_rows
+            for index in range(len(self.palette)):
+                pygame.draw.rect(pick_box,
+                                 palette[index],
+                                 pygame.Rect(
+                                     (index % columns) * width,
+                                     self.color_picker_height * divmod(index, columns)[0],
+                                     width + 1,
+                                     self.color_picker_height))
+        else:
+            pygame.draw.rect(pick_box, palette[self.click_color], pick_box.get_rect())
+
+        pygame.display.get_surface().blit(screen, (0, 0))
+        pygame.display.get_surface().blit(pick_box, (0, self.size[1]))
+
+        pygame.display.flip()
+        return not picker
 
     def paint(self, pos = None, flip = True, field = None):
         """
@@ -312,27 +340,42 @@ class ReflectionPattern:
                 self.data[pos[0]][pos[1]][4] = True
 
                 if flip:
-                    pygame.display.get_surface().blit(field, (0,0))
+                    pygame.display.get_surface().blit(field, corners[0],
+                                                      pygame.Rect(corners[0],
+                                                          (corners[3][0] - corners[0][0],
+                                                           corners[3][1] - corners[0][1])))
                     pygame.display.flip()
 
         return field
 
-    def mouseclick(self, pos, color = None):
+    def mouse_click(self, event):
         """
         process mouse click event. Should take event as parameter
         :param pos:
         :param color:
         :return:
         """
-        if pos[1] < self.base[1]*self.scale[1]:
-            if color is None:
-                color = self.palette[self.click_color]
+        if event.button == 4:
+            self.change_click_color(+1)
+        if event.button == 5:
+            self.change_click_color(-1)
+        if event.button == 1 or event.button == 3:
+            color = (event.button == 1 and
+                     [self.palette[self.click_color]] or
+                     [self.palette[self.back_color]])[0]
 
-            self.flood(pos, color)
-            self.repaint()
-        else:
-            self.click_color = self.palette.index(pygame.display.get_surface().get_at(pos)[:-1])
-            self.set_caption()
+            if event.pos[1] < self.size[1]:
+                if color is None:
+                    color = self.palette[self.click_color]
+
+                self.flood(event.pos, color)
+                self.repaint()
+            else:
+                if not self.color_shown:
+                    self.change_click_color(index =
+                        self.palette.index(pygame.display.get_surface().get_at(event.pos)[:-1]))
+                else:
+                    self.color_shown = self.paint_color_picker(picker = self.color_shown)
 
     def get_adjacent_to(self, pos, direction):
         """
@@ -411,9 +454,13 @@ class ReflectionPattern:
                             pass
         return screen
 
-    def change_click_color(self, delta):
-        self.click_color = (self.click_color + delta) % len(self.palette)
+    def change_click_color(self, delta = 0, index = None):
+        if index is None:
+            self.click_color = (self.click_color + delta) % len(self.palette)
+        else:
+            self.click_color = index
         self.set_caption()
+        self.color_shown = self.paint_color_picker(False)
 
     def set_caption(self):
         pygame.display.set_caption(
