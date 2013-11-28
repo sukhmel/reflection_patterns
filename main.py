@@ -1,10 +1,19 @@
 #! /usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-TODO:
- * clickable input interface
- * GUI to interact with user
- * refactor mouse_click and keyboard_click
+controls:
+    + or ] increases scale
+    - or [ decreases scale
+    > increases time delay
+    < decreases time delay
+    mousewheel scrolls through colors to fill
+    left mousebutton fills with current color
+    right mousebutton fills with background color
+    arrow keys change field size
+    
+usage:
+    game = ReflectionPattern(...)
+    game.execute()
 """
 
 __author__ = 'sukhmel'
@@ -12,20 +21,48 @@ __author__ = 'sukhmel'
 import sys
 import pygame
 
+pygame.init()
+
 class ReflectionPattern:
 
-    def __init__(self):
+    def __init__(self
+                 , base             = (21,19)
+                 , scale            = (2,2)
+                 , pattern          = [(48,), (48,), 0, (13,), 0]
+                 , step             = 0
+                 , start_position   = (0,0)
+                 , start_direction  = [1, 1]
+                 , start_step       = 0
+                 , profile          = False
+    ):
         """
-        initialize pygame and reset everything to defaults
+        initialize internals and reset everything to defaults or passed values
+        :param base:            size of field in terms of cells. Will be multiplied by scale
+        :param scale:           scale of dimensions separately
+        :param pattern:         pattern of line to emerge. 0 is blank space, 1 is foreground colors,
+                                (i,) is color number i in palette, (r, g, b) is RGB color value
+        :param step:            amount of milliseconds used in call to pygame.tyme.wait() before each
+                                field redraw. Real slowdown differs because of drawing speed.
+        :param start_position:  initial cell
+        :param start_direction: initial direction
+        :param start_step:      initial index inside of pattern
+        :param profile:         close after first complete calculation of the field. Useful for profiling advance()
         """
-        pygame.init()
+        self.in_direction = start_direction
+        self.in_position = start_position
+        self.in_step    = start_step
+        self.step       = step
+        self.base       = base
+        self.scale      = scale
+        self.pattern    = pattern
+        self.profile    = profile
 
-        self.step = 0
-        self.base = (0, 0) #(64, 33)
-        self.scale = (20, 20)
-        self.size = (0, 0)
+        # following values will be set within reset() call
+        self.direction  = 0
+        self.position   = 0
+        self.patt_step  = 0
 
-        self.palette = []
+        self.palette    = []
         color_values = (0, 100, 200, 255)
         for r in color_values:
             for g in color_values:
@@ -36,29 +73,25 @@ class ReflectionPattern:
         self.click_color = 3
         self.back_color  = len(self.palette) - 1
 
-        self.colorpicker = 20
+        self.color_picker_height = 20
 
         self.proceed = True
         self.draw    = True
         self.data = [] # [ [1(\),0( ),-1(/)], line color, top color, bottom color, is rendered flag
 
-        self.pattern_step = 0
-        self.position = (0, 0)
-        self.direction = [1, 1]
-        self.pattern = [] #1, 1, 0, 1, 1, 1, 0 # 1, 1, 0, 1, 0, 0
-        self.window = 0
+        self.size = (1, 1)
+        self.reset(force = True)
 
-        self.reset((19, 21))
-
-    def reset(self, new_base):
+    def reset(self, new_base = None, force = False):
         """
         reset field parameters, restart calculating if necessary, otherwise continue
         set all data[4] to False, so that they are rendered
         :param new_base: size of field without respect to scaling
         """
-        if self.base != new_base:
+        if self.base != new_base or force:
+            if new_base is not None:
+                self.base = new_base
             self.proceed = True
-            self.base = new_base
             self.data = [[[0,                               # line type: 0 - no line, 1 is \, -1 is /
                            self.palette[self.fore_color],   # line color
                            self.palette[self.back_color],   # upper color
@@ -66,20 +99,21 @@ class ReflectionPattern:
                            False]                           # is rendered
                             for y in range(self.base[1])]
                             for x in range(self.base[0])]
-            self.pattern_step = 0
-            self.position = (0, 0)
-            self.direction = [1, 1]
-            self.pattern = [1, 1, 0, 1, 0]
+            self.direction  = list(self.in_direction)
+            self.position   = self.in_position
+            self.patt_step  = self.in_step
         else:
             for y in range(self.base[1]):
                 for x in range(self.base[0]):
                     self.data[x][y][4] = False
 
         self.draw = True
-        self.size = (self.base[0]*self.scale[0], self.base[1]*self.scale[1] + self.colorpicker)
-        self.window = pygame.display.set_mode(self.size)
+        self.size = (self.base[0]*self.scale[0], self.base[1]*self.scale[1] + self.color_picker_height)
+        pygame.display.set_mode(self.size)
         self.set_caption()
         self.repaint()
+        pygame.display.get_surface().blit(self.paint_colorpicker(), (0,0))
+        pygame.display.flip()
 
     def user_input(self, events):
         """
@@ -137,10 +171,6 @@ class ReflectionPattern:
         """
         while 1:
             self.user_input(pygame.event.get())
-            if self.draw:
-                pygame.display.get_surface().blit(self.paint_colorpicker(), (0,0))
-                pygame.display.flip()
-
             if self.step > 0:
                 pygame.time.wait( self.step )
 
@@ -161,18 +191,20 @@ class ReflectionPattern:
         """
         value = self.direction[0]*self.direction[1]
         color = self.palette[self.fore_color]
-        if isinstance(self.pattern[self.pattern_step], tuple):
-            if len(self.pattern[self.pattern_step]) == 1:
-                color = self.palette[self.pattern[self.pattern_step][0]]
+        if isinstance(self.pattern[self.patt_step], tuple):
+            if len(self.pattern[self.patt_step]) == 1:
+                color = self.palette[self.pattern[self.patt_step][0]]
             else:
-                color = self.pattern[self.pattern_step]
+                color = self.pattern[self.patt_step]
 
-        elif not self.pattern[self.pattern_step]:
+        elif not self.pattern[self.patt_step]:
             value = 0
 
         # field data:      at given coordinates, [1(\)0( )-1(/)], line,  top,           bottom, already rendered
-        self.data[self.position[0]][self.position[1]] = [value, color, self.palette[self.back_color], self.palette[self.back_color], False]
-        self.pattern_step = (self.pattern_step + 1) % len(self.pattern)
+        self.data[self.position[0]][self.position[1]] = [value, color,
+                                                         self.palette[self.back_color],
+                                                         self.palette[self.back_color], False]
+        self.patt_step = (self.patt_step + 1) % len(self.pattern)
 
         new_position = list(self.position)
         for i in range(2):
@@ -184,6 +216,8 @@ class ReflectionPattern:
 
         if new_position == self.position:
             self.proceed = False # so that we will stop instead of travelling backwards
+            if self.profile:
+                pygame.event.post(pygame.event.Event(pygame.QUIT))
 
         temp = self.position
         self.position = new_position
@@ -219,9 +253,9 @@ class ReflectionPattern:
                              palette[index],
                              pygame.Rect(
                                  index*width,
-                                 self.size[1] - self.colorpicker,
+                                 self.size[1] - self.color_picker_height,
                                  width + 1,
-                                 self.colorpicker))
+                                 self.color_picker_height))
         return screen
 
     def paint(self, pos = None, flip = True, field = None):
@@ -384,9 +418,8 @@ class ReflectionPattern:
     def set_caption(self):
         pygame.display.set_caption(
             '%i x %i ' % self.base + '@ (%i, %i) ' % self.scale
-            + ', color is (%i, %i, %i)' %
-            self.palette[self.click_color])
+            + ', color is (%i, %i, %i) ' %  self.palette[self.click_color] + '#%i' % self.click_color)
 
 if __name__ == "__main__":
-    game = ReflectionPattern();
+    game = ReflectionPattern()
     game.execute()
