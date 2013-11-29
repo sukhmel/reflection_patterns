@@ -29,11 +29,13 @@ class ReflectionPattern:
                  , base             = (21,19)
                  , scale            = (5,5)
                  , pattern          = [(48,), (48,), 0, (13,), 0]
+                 , auto_color       = False
                  , step             = 0
                  , start_position   = (0,0)
                  , start_direction  = [1, 1]
                  , start_step       = 0
                  , profile          = False
+                 , profile_string   = None
     ):
         """
         initialize internals and reset everything to defaults or passed values
@@ -47,15 +49,21 @@ class ReflectionPattern:
         :param start_direction: initial direction
         :param start_step:      initial index inside of pattern
         :param profile:         close after first complete calculation of the field. Useful for profiling advance()
+        :param profile_string:  executed as "self.[profile_string]" to automatically profile interaction
         """
+        self.profile_string = profile_string
         self.in_direction = start_direction
         self.in_position = start_position
         self.in_step    = start_step
         self.step       = step
         self.base       = base
-        self.scale      = scale
         self.pattern    = pattern
         self.profile    = profile
+        self.auto_color = auto_color
+        if isinstance(scale, int):
+            self.scale      = (scale, scale)
+        else:
+            self.scale      = scale
 
         # following values will be set within reset() call
         self.direction  = 0
@@ -78,6 +86,8 @@ class ReflectionPattern:
         self.color_picker_rows   = len(color_values)
         self.proceed = True
         self.draw    = True
+
+        self.uncoloured = set() # uncoloured points
         self.data = [] # [ [1(\),0( ),-1(/)], line color, top color, bottom color, is rendered flag
 
         self.size = (1, 1)
@@ -93,6 +103,8 @@ class ReflectionPattern:
             if new_base is not None:
                 self.base = new_base
             self.proceed = True
+
+            self.data = []  # list comprehension is used to correctly fill an array with copies, not references
             self.data = [[[0,                               # line type: 0 - no line, 1 is \, -1 is /
                            self.palette[self.fore_color],   # line color
                            self.palette[self.back_color],   # upper color
@@ -100,6 +112,14 @@ class ReflectionPattern:
                            False]                           # is rendered
                             for y in range(self.base[1])]
                             for x in range(self.base[0])]
+
+            self.uncoloured = set()
+            for x in range(self.base[0]):
+                for y in range(self.base[1]):
+                    for z in (2, 3):
+                        self.uncoloured.add((x, y, z))
+
+
             self.direction  = list(self.in_direction)
             self.position   = self.in_position
             self.patt_step  = self.in_step
@@ -164,6 +184,9 @@ class ReflectionPattern:
             if  event.type == pygame.MOUSEBUTTONUP:
                 self.mouse_click(event)
 
+            if event.type == pygame.USEREVENT + 1:
+                exec("self."+event.do)
+
     def execute(self):
         """
         start main loop for events and rendering
@@ -177,9 +200,13 @@ class ReflectionPattern:
                 pos = self.advance()
                 if self.step > 0:
                     self.paint(pos, True)
+
             if not self.proceed:
                 if self.draw:
                     self.paint()
+                if self.auto_color:
+                    self.automatic_colouring()
+
                 else:
                     pygame.time.wait(100)
 
@@ -215,8 +242,13 @@ class ReflectionPattern:
 
         if new_position == self.position:
             self.proceed = False # so that we will stop instead of travelling backwards
+
             if self.profile:
-                pygame.event.post(pygame.event.Event(pygame.QUIT))
+                if self.profile_string is not None:
+                    exec(["self." + s for s in self.profile_string.split(';')])
+
+                event = pygame.event.Event(pygame.QUIT)
+                pygame.event.post(event)
 
         temp = self.position
         self.position = new_position
@@ -240,6 +272,15 @@ class ReflectionPattern:
             pygame.display.flip()
         else:
             self.draw = False
+
+    def automatic_colouring(self):
+        try:
+            point = self.uncoloured.pop()
+        except KeyError:
+            self.draw = False
+        else:
+            self.flood(point=point, auto=True)
+            self.repaint()
 
     def paint_color_picker(self, picker = True, palette = None):
         """
@@ -414,45 +455,64 @@ class ReflectionPattern:
         else:
             raise IndexError
 
-    def flood(self, pos, color):
+    def flood(self, pos = None, color = None, point = None, auto = False):
         """
-        TODO incomplete
         flood fill with chosen color
         :param pos:   data coordinates of starting point
         :param color: color to fill with
         :return:      modified screen that was used for painting
         """
-        queue = set()
-        place = (int(pos[0]/self.scale[0]), int(pos[1]/self.scale[1]))
-        data_point = self.data[place[0]][place[1]]
-        value = (data_point[0] == -1 and [-1] or [1])[0]
-        # top's value is index of corresponding color in data; 2 is top, 3 is bottom
-        top = ((0 < pos[0] % self.scale[0] - value*(pos[1] % self.scale[1]) < sum(self.scale)/2) and [2] or [3])[0]
-        ref_color = data_point[top]
-        queue.add((place[0], place[1], top))
+        if not auto and color is None:
+            raise TypeError('Color must be specified unless auto-painting is done')
+
+        if pos is None and point is None:
+            raise TypeError('Either on-screen coordinates or field point coordinates must be specified')
+
+        if point is None:
+            place = (int(pos[0]/self.scale[0]), int(pos[1]/self.scale[1]))
+            value = (self.data[place[0]][place[1]][0] == -1 and [-1] or [1])[0]
+            # top's value is index of corresponding color in data; 2 is top, 3 is bottom
+            top = ((0 < pos[0] % self.scale[0] - value*(pos[1] % self.scale[1]) < sum(self.scale)/2) and [2] or [3])[0]
+            point = tuple(place) + (top, )
+
         screen = pygame.display.get_surface()
 
         #for logic of calculating adjacent positions: see doc folder
         #could've been done clearer, I guess
-        if ref_color != color:
-            self.data[place[0]][place[1]][top]  = color
-            self.data[place[0]][place[1]][4]    = False
-            while 1:
+        if (self.data[point[0]][point[1]][point[2]] != color and color is not None) \
+            or (auto and self.data[point[0]][point[1]][point[2]] == self.palette[self.back_color]):
+            area = self.get_contiguous_area(point, auto)
+            if auto:
+                color = self.palette[len(area) % (len(self.palette) - 1)]
+            for position in area:
+                self.data[position[0]][position[1]][position[2]] = color
+                self.data[position[0]][position[1]][4] = False
+
+        return screen
+
+    def get_contiguous_area(self, pos, mark_as_coloured = False):
+        queue = set()
+        result = set()
+        queue.add(pos)
+        result.add(pos)
+        while 1:
                 try:
                     point = queue.pop()
                 except KeyError:
                     break
                 else:
-                    for i in ['h', 'v', 's']:
+                    for direction in ['h', 'v', 's']:
                         try:
-                            temp = self.get_adjacent_to(point, i)
-                            if self.data[temp[0]][temp[1]][temp[2]] == ref_color:
+                            temp = self.get_adjacent_to(point, direction)
+                            if temp not in result:
                                 queue.add(temp)
-                                self.data[temp[0]][temp[1]][temp[2]] = color
-                                self.data[temp[0]][temp[1]][4] = False
+                                result.add(temp)
                         except IndexError:
                             pass
-        return screen
+        if mark_as_coloured:
+            self.uncoloured = self.uncoloured - result
+
+        return result
 
     def change_click_color(self, delta = 0, index = None):
         if index is None:
@@ -468,5 +528,9 @@ class ReflectionPattern:
             + ', color is (%i, %i, %i) ' %  self.palette[self.click_color] + '#%i' % self.click_color)
 
 if __name__ == "__main__":
-    game = ReflectionPattern()
+    game = ReflectionPattern(auto_color=True)
     game.execute()
+# interesting base values are:
+# 123 119
+# 19  21
+# 317 182
