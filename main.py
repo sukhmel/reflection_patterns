@@ -31,7 +31,7 @@ class ReflectionPattern:
                  , scale            = (5,5)
                  , pattern          = [1, 1, 0, 1, 0]
                  , auto_color       = False
-                 , step             = 0
+                 , timeout          = 0
                  , start_position   = (0,0)
                  , start_direction  = [1, 1]
                  , start_step       = 0
@@ -44,7 +44,7 @@ class ReflectionPattern:
         :param scale:           scale of dimensions separately
         :param pattern:         pattern of line to emerge. 0 is blank space, 1 is foreground colors,
                                 (i,) is color number i in palette, (r, g, b) is RGB color value
-        :param step:            amount of milliseconds used in call to pygame.tyme.wait() before each
+        :param timeout:         amount of milliseconds used in call to pygame.tyme.wait() before each
                                 field redraw. Real slowdown differs because of drawing speed.
         :param start_position:  initial cell
         :param start_direction: initial direction
@@ -56,23 +56,24 @@ class ReflectionPattern:
         self.in_direction = start_direction
         self.in_position = start_position
         self.in_step    = start_step
-        self.step       = step
+        self.timeout    = timeout
         self.base       = base
         self.pattern    = pattern
         self.profile    = profile
         self.auto_color = auto_color
+        self.color_shown= True
         if isinstance(scale, int):
-            self.scale      = (scale, scale)
+            self.scale  = (scale, scale)
         else:
-            self.scale      = scale
+            self.scale  = scale
 
         # following values will be set within reset() call
         self.direction  = 0
         self.position   = 0
         self.patt_step  = 0
-        self.color_shown= 0
 
         self.palette    = [(0, 0, 0)]
+        self.auto_palette = []
 
         val_range = 1
         sat_range = 4
@@ -83,7 +84,10 @@ class ReflectionPattern:
                     color = colorsys.hsv_to_rgb((h+1)/hue_range,
                                                 (s+1)/sat_range,
                                                 (v+1)/val_range)
-                    self.palette.append(tuple([int(c*255) for c in color]))
+                    color = tuple([int(c*255) for c in color])
+                    self.palette.append(color)
+                    if s == max(sat_range - 2, 1):
+                        self.auto_palette.append(color)
 
         self.palette.append((255, 255, 255))
 
@@ -140,7 +144,8 @@ class ReflectionPattern:
         self.draw = True
         self.size = (self.base[0]*self.scale[0],
                      self.base[1]*self.scale[1])
-        pygame.display.set_mode((self.size[0], self.size[1] + self.color_picker_height))
+        rows = (self.color_shown and [1] or [self.color_picker_rows])[0]
+        pygame.display.set_mode((self.size[0], self.size[1] + self.color_picker_height * rows))
         field = pygame.Surface(pygame.display.get_surface().get_size())
         field = field.convert()
         field.fill(self.get_color(self.back_color))
@@ -148,7 +153,7 @@ class ReflectionPattern:
         pygame.display.flip()
         self.set_caption()
         self.repaint()
-        self.color_shown = self.paint_color_picker(picker = False)
+        self.paint_color_picker(picker = not self.color_shown)
 
     def user_input(self, events):
         """
@@ -184,11 +189,11 @@ class ReflectionPattern:
                         self.scale = (self.scale[0] - 1, self.scale[1] - 1)
                         self.reset(self.base)
                 if event.unicode == "<":
-                    self.step -= 10
-                    self.step = max([0, self.step])
+                    self.timeout -= 10
+                    self.timeout = max([0, self.timeout])
                 if event.unicode == ">":
-                    self.step += 10
-                    self.step = min([500, self.step])
+                    self.timeout += 10
+                    self.timeout = min([500, self.timeout])
 
             if  event.type == pygame.MOUSEBUTTONUP:
                 self.mouse_click(event)
@@ -202,12 +207,12 @@ class ReflectionPattern:
         """
         while 1:
             self.user_input(pygame.event.get())
-            if self.step > 0:
-                pygame.time.wait( self.step )
+            if self.timeout > 0:
+                pygame.time.wait( self.timeout )
 
             if self.proceed:
                 pos = self.advance()
-                if self.step > 0:
+                if self.timeout > 0:
                     self.paint(pos, True)
 
             if not self.proceed:
@@ -225,13 +230,17 @@ class ReflectionPattern:
 
         if isinstance(index, tuple):
             if len(index) == 1:
-                color = palette[index[0] % len(palette)]
+                color = self.get_color(index[0], palette)
             else:
                 color = index
         elif index is None:
-            color = self.get_color(self.fore_color)
+            color = None
+        elif index == 1:
+            color = self.get_color(self.fore_color, self.palette)
         else:
-            color = palette[index]
+            if not isinstance(index, int):
+                index = int(index)
+            color = palette[index % len(palette)]
 
         return color
 
@@ -240,8 +249,12 @@ class ReflectionPattern:
         calculate next state of the field depending on current
         :return: changed data's position. paint should be later called on this position
         """
-        value = (self.pattern[self.patt_step] and [self.direction[0]*self.direction[1]] or [0])[0]
         color = self.get_color(self.pattern[self.patt_step])
+
+        if color is None or not self.pattern[self.patt_step]:
+            value = 0
+        else:
+            value = self.direction[0]*self.direction[1]
 
         # field data:      at given coordinates, [1(\)0( )-1(/)], line,  top,           bottom, already rendered
         self.data[self.position[0]][self.position[1]] = [value, color,
@@ -435,8 +448,9 @@ class ReflectionPattern:
                      [self.get_color(self.back_color)])[0]
 
             if event.pos[1] < self.size[1]:
-                self.flood(event.pos, color)
-                self.repaint()
+                if not self.draw:
+                    self.flood(event.pos, color)
+                    self.repaint()
             else:
                 if not self.color_shown:
                     self.change_click_color(index =
@@ -509,7 +523,7 @@ class ReflectionPattern:
             or (auto and self.data[point[0]][point[1]][point[2]] == self.get_color(self.back_color)):
             area = self.get_contiguous_area(point, auto)
             if auto:
-                color = self.palette[int(len(area)/2) % (len(self.palette) - 1)]
+                color = self.get_color(int(len(area)/2), self.auto_palette)
             for position in area:
                 self.data[position[0]][position[1]][position[2]] = color
                 self.data[position[0]][position[1]][4] = False
@@ -554,7 +568,7 @@ class ReflectionPattern:
             + ', color is (%i, %i, %i) ' %  self.get_color(self.click_color) + '#%i' % self.click_color)
 
 if __name__ == "__main__":
-    game = ReflectionPattern(auto_color=True, base=(25,13), scale=2)
+    game = ReflectionPattern(auto_color=True, base=(21,19), scale=2, timeout=5)
     game.execute()
 # 123 119
 # 19  21
