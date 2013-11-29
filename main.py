@@ -20,6 +20,7 @@ __author__ = 'sukhmel'
 
 import sys
 import pygame
+import colorsys
 
 pygame.init()
 
@@ -28,7 +29,7 @@ class ReflectionPattern:
     def __init__(self
                  , base             = (21,19)
                  , scale            = (5,5)
-                 , pattern          = [(48,), (48,), 0, (13,), 0]
+                 , pattern          = [1, 1, 0, 1, 0]
                  , auto_color       = False
                  , step             = 0
                  , start_position   = (0,0)
@@ -71,19 +72,27 @@ class ReflectionPattern:
         self.patt_step  = 0
         self.color_shown= 0
 
-        self.palette    = []
-        color_values = (0, 50, 100, 200, 255)
-        for r in color_values:
-            for g in color_values:
-                for b in color_values:
-                    self.palette.append((r, g, b))
+        self.palette    = [(0, 0, 0)]
+
+        val_range = 1
+        sat_range = 4
+        hue_range = 50
+        for s in range(sat_range - 1, -1, -1 ):
+            for v in range(val_range):
+                for h in range(hue_range):
+                    color = colorsys.hsv_to_rgb((h+1)/hue_range,
+                                                (s+1)/sat_range,
+                                                (v+1)/val_range)
+                    self.palette.append(tuple([int(c*255) for c in color]))
+
+        self.palette.append((255, 255, 255))
 
         self.fore_color  = 0
-        self.click_color = 105
+        self.click_color = 105 % len(self.palette)
         self.back_color  = -1
 
-        self.color_picker_height = 10
-        self.color_picker_rows   = len(color_values)
+        self.color_picker_height = 8
+        self.color_picker_rows   = sat_range
         self.proceed = True
         self.draw    = True
 
@@ -106,9 +115,9 @@ class ReflectionPattern:
 
             self.data = []  # list comprehension is used to correctly fill an array with copies, not references
             self.data = [[[0,                               # line type: 0 - no line, 1 is \, -1 is /
-                           self.palette[self.fore_color],   # line color
-                           self.palette[self.back_color],   # upper color
-                           self.palette[self.back_color],   # lower color
+                           self.get_color(self.fore_color), # line color
+                           self.get_color(self.back_color),   # upper color
+                           self.get_color(self.back_color),   # lower color
                            False]                           # is rendered
                             for y in range(self.base[1])]
                             for x in range(self.base[0])]
@@ -134,7 +143,7 @@ class ReflectionPattern:
         pygame.display.set_mode((self.size[0], self.size[1] + self.color_picker_height))
         field = pygame.Surface(pygame.display.get_surface().get_size())
         field = field.convert()
-        field.fill(self.back_color)
+        field.fill(self.get_color(self.back_color))
         pygame.display.get_surface().blit(field, (0, 0))
         pygame.display.flip()
         self.set_caption()
@@ -210,26 +219,34 @@ class ReflectionPattern:
                 else:
                     pygame.time.wait(100)
 
+    def get_color(self, index, palette = None):
+        if palette is None:
+            palette = self.palette
+
+        if isinstance(index, tuple):
+            if len(index) == 1:
+                color = palette[index[0] % len(palette)]
+            else:
+                color = index
+        elif index is None:
+            color = self.get_color(self.fore_color)
+        else:
+            color = palette[index]
+
+        return color
+
     def advance(self):
         """
         calculate next state of the field depending on current
         :return: changed data's position. paint should be later called on this position
         """
-        value = self.direction[0]*self.direction[1]
-        color = self.palette[self.fore_color]
-        if isinstance(self.pattern[self.patt_step], tuple):
-            if len(self.pattern[self.patt_step]) == 1:
-                color = self.palette[self.pattern[self.patt_step][0]]
-            else:
-                color = self.pattern[self.patt_step]
-
-        elif not self.pattern[self.patt_step]:
-            value = 0
+        value = (self.pattern[self.patt_step] and [self.direction[0]*self.direction[1]] or [0])[0]
+        color = self.get_color(self.pattern[self.patt_step])
 
         # field data:      at given coordinates, [1(\)0( )-1(/)], line,  top,           bottom, already rendered
         self.data[self.position[0]][self.position[1]] = [value, color,
-                                                         self.palette[self.back_color],
-                                                         self.palette[self.back_color], False]
+                                                         self.get_color(self.back_color),
+                                                         self.get_color(self.back_color), False]
         self.patt_step = (self.patt_step + 1) % len(self.pattern)
 
         new_position = list(self.position)
@@ -293,7 +310,6 @@ class ReflectionPattern:
             palette = self.palette
 
         screen = pygame.Surface.convert(pygame.display.get_surface())
-        resized = False
 
         if picker:
             rows = self.color_picker_rows
@@ -302,24 +318,38 @@ class ReflectionPattern:
         size = (self.size[0], self.size[1] + self.color_picker_height * rows)
         if pygame.display.get_surface().get_size() != size:
             pygame.display.set_mode(size)
-            resized = True
 
         pick_box = pygame.Surface((self.size[0], self.color_picker_height * rows)).convert()
 
         if picker:
-            width = pick_box.get_size()[0] * \
+            length = len(palette)-2
+            width = (pick_box.get_size()[0] - self.color_picker_height/2) * \
                     self.color_picker_rows / len(palette)
-            columns = len(palette)/self.color_picker_rows
-            for index in range(len(self.palette)):
+            columns = length/rows
+            pygame.draw.rect(pick_box,
+                             self.get_color(0, palette),
+                             pygame.Rect(
+                                 pick_box.get_size()[0] - self.color_picker_height,
+                                 0,
+                                 self.color_picker_height + 1,
+                                 self.color_picker_height * rows/2))
+            pygame.draw.rect(pick_box,
+                             self.get_color(-1, palette),
+                             pygame.Rect(
+                                 pick_box.get_size()[0] - self.color_picker_height,
+                                 self.color_picker_height * rows/2,
+                                 self.color_picker_height + 1,
+                                 self.color_picker_height * rows/2))
+            for index in range(length):
                 pygame.draw.rect(pick_box,
-                                 palette[index],
+                                 self.get_color(index + 1, palette),
                                  pygame.Rect(
                                      (index % columns) * width,
                                      self.color_picker_height * divmod(index, columns)[0],
                                      width + 1,
                                      self.color_picker_height))
         else:
-            pygame.draw.rect(pick_box, palette[self.click_color], pick_box.get_rect())
+            pygame.draw.rect(pick_box, self.get_color(self.click_color), pick_box.get_rect())
 
         pygame.display.get_surface().blit(screen, (0, 0))
         pygame.display.get_surface().blit(pick_box, (0, self.size[1]))
@@ -391,9 +421,8 @@ class ReflectionPattern:
 
     def mouse_click(self, event):
         """
-        process mouse click event. Should take event as parameter
-        :param pos:
-        :param color:
+        process mouse click event.
+        :param event:
         :return:
         """
         if event.button == 4:
@@ -402,13 +431,10 @@ class ReflectionPattern:
             self.change_click_color(-1)
         if event.button == 1 or event.button == 3:
             color = (event.button == 1 and
-                     [self.palette[self.click_color]] or
-                     [self.palette[self.back_color]])[0]
+                     [self.get_color(self.click_color)] or
+                     [self.get_color(self.back_color)])[0]
 
             if event.pos[1] < self.size[1]:
-                if color is None:
-                    color = self.palette[self.click_color]
-
                 self.flood(event.pos, color)
                 self.repaint()
             else:
@@ -480,10 +506,10 @@ class ReflectionPattern:
         #for logic of calculating adjacent positions: see doc folder
         #could've been done clearer, I guess
         if (self.data[point[0]][point[1]][point[2]] != color and color is not None) \
-            or (auto and self.data[point[0]][point[1]][point[2]] == self.palette[self.back_color]):
+            or (auto and self.data[point[0]][point[1]][point[2]] == self.get_color(self.back_color)):
             area = self.get_contiguous_area(point, auto)
             if auto:
-                color = self.palette[len(area) % (len(self.palette) - 1)]
+                color = self.palette[int(len(area)/2) % (len(self.palette) - 1)]
             for position in area:
                 self.data[position[0]][position[1]][position[2]] = color
                 self.data[position[0]][position[1]][4] = False
@@ -525,12 +551,12 @@ class ReflectionPattern:
     def set_caption(self):
         pygame.display.set_caption(
             '%i x %i ' % self.base + '@ (%i, %i) ' % self.scale
-            + ', color is (%i, %i, %i) ' %  self.palette[self.click_color] + '#%i' % self.click_color)
+            + ', color is (%i, %i, %i) ' %  self.get_color(self.click_color) + '#%i' % self.click_color)
 
 if __name__ == "__main__":
-    game = ReflectionPattern(auto_color=True)
+    game = ReflectionPattern(auto_color=True, base=(25,13), scale=2)
     game.execute()
-# interesting base values are:
 # 123 119
 # 19  21
 # 317 182
+# 225 113
