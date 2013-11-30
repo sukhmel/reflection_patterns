@@ -10,6 +10,7 @@ controls:
     left mousebutton fills with current color
     right mousebutton fills with background color
     arrow keys change field size
+    spacebar to pause auto colouring
     
 usage:
     game = ReflectionPattern(...)
@@ -29,11 +30,12 @@ class ReflectionPattern:
     def __init__(self
                  , base             = (21,19)
                  , scale            = (5,5)
-                 , pattern          = [1, 1, 0, 1, 0]
+                 , pattern          = (True, True, None, True, False)
                  , auto_color       = False
+                 , paint_auto_steps = False
                  , timeout          = 0
                  , start_position   = (0,0)
-                 , start_direction  = [1, 1]
+                 , start_direction  = (1, 1)
                  , start_step       = 0
                  , profile          = False
                  , profile_string   = None
@@ -42,8 +44,10 @@ class ReflectionPattern:
         initialize internals and reset everything to defaults or passed values
         :param base:            size of field in terms of cells. Will be multiplied by scale
         :param scale:           scale of dimensions separately
-        :param pattern:         pattern of line to emerge. 0 is blank space, 1 is foreground colors,
-                                (i,) is color number i in palette, (r, g, b) is RGB color value
+        :param pattern:         pattern of line to emerge. None or False is a blank space, True is foreground color,
+                                anything convertible to int is color number in palette, (r, g, b) is RGB color value
+        :param auto_color:      automatically color field parts based on size or other parameters
+        :param paint_auto_steps: repaint after each step of auto colouring
         :param timeout:         amount of milliseconds used in call to pygame.tyme.wait() before each
                                 field redraw. Real slowdown differs because of drawing speed.
         :param start_position:  initial cell
@@ -52,6 +56,7 @@ class ReflectionPattern:
         :param profile:         close after first complete calculation of the field. Useful for profiling advance()
         :param profile_string:  executed as "self.[profile_string]" to automatically profile interaction
         """
+        self.paint_auto_steps = paint_auto_steps
         self.profile_string = profile_string
         self.in_direction = start_direction
         self.in_position = start_position
@@ -101,6 +106,7 @@ class ReflectionPattern:
         self.draw    = True
 
         self.uncoloured = set() # uncoloured points
+        self.buffer     = set()
         self.data = [] # [ [1(\),0( ),-1(/)], line color, top color, bottom color, is rendered flag
 
         self.size = (1, 1)
@@ -188,6 +194,8 @@ class ReflectionPattern:
                     if self.scale[0] > 1 and self.scale[1] > 1:
                         self.scale = (self.scale[0] - 1, self.scale[1] - 1)
                         self.reset(self.base)
+                if event.key == pygame.K_SPACE:
+                    self.uncoloured, self.buffer = self.buffer, self.uncoloured
                 if event.unicode == "<":
                     self.timeout -= 10
                     self.timeout = max([0, self.timeout])
@@ -218,29 +226,39 @@ class ReflectionPattern:
             if not self.proceed:
                 if self.draw:
                     self.paint()
-                if self.auto_color:
-                    self.automatic_colouring()
+                    self.draw = False
 
-                else:
+                if not (self.auto_color and self.automatic_colouring(self.paint_auto_steps)):
                     pygame.time.wait(100)
 
     def get_color(self, index, palette = None):
+        """
+        get color from given palette
+        :param index: None or False gives None color, True gives foreground color, anything convertible to int takes
+                      color by index from palette, any kind of container of length 3 gives (r, g, b) as RGB color value
+        :param palette: palette to take color from. Takes from self.palette if None or unspecified
+        :return: color tuple in RGB format: (r, g, b)
+        """
         if palette is None:
             palette = self.palette
 
-        if isinstance(index, tuple):
+        try:
             if len(index) == 1:
                 color = self.get_color(index[0], palette)
-            else:
+            elif len(index) == 3:
                 color = index
-        elif index is None:
-            color = None
-        elif index == 1:
-            color = self.get_color(self.fore_color, self.palette)
-        else:
-            if not isinstance(index, int):
-                index = int(index)
-            color = palette[index % len(palette)]
+            else:
+                raise ValueError('Pattern element must be container of length 3, bool, None or int-convertible. '
+                                 'Can not convert ' + str(index))
+        except TypeError:
+            if index is None or index is False:
+                color = None
+            elif index is True:
+                color = self.get_color(self.fore_color, self.palette)
+            else:
+                if not isinstance(index, int):
+                    index = int(index)
+                color = palette[index % len(palette)]
 
         return color
 
@@ -251,7 +269,7 @@ class ReflectionPattern:
         """
         color = self.get_color(self.pattern[self.patt_step])
 
-        if color is None or not self.pattern[self.patt_step]:
+        if color is None:
             value = 0
         else:
             value = self.direction[0]*self.direction[1]
@@ -275,7 +293,7 @@ class ReflectionPattern:
 
             if self.profile:
                 if self.profile_string is not None:
-                    exec(["self." + s for s in self.profile_string.split(';')])
+                    exec(self.profile_string)
 
                 event = pygame.event.Event(pygame.QUIT)
                 pygame.event.post(event)
@@ -288,8 +306,10 @@ class ReflectionPattern:
         """
         paint whole field
         :param force: repaint all parts of field
+        :return: new value to be applied to self.draw
         """
         field = None
+        draw  = True
         if force:   #dedicated cycle to improve performance
             for x in range(len(self.data)):
                 for y in range(len(self.data[x])):
@@ -301,16 +321,22 @@ class ReflectionPattern:
             pygame.display.get_surface().blit(field, (0,0))
             pygame.display.flip()
         else:
-            self.draw = False
+            draw = False
+        return draw
 
-    def automatic_colouring(self):
+    def automatic_colouring(self, repaint = False):
+        result = True
         try:
             point = self.uncoloured.pop()
         except KeyError:
-            self.draw = False
+            result = False
         else:
             self.flood(point=point, auto=True)
+
+        if repaint or not result:
             self.repaint()
+
+        return result
 
     def paint_color_picker(self, picker = True, palette = None):
         """
@@ -339,19 +365,20 @@ class ReflectionPattern:
             width = (pick_box.get_size()[0] - self.color_picker_height/2) * \
                     self.color_picker_rows / len(palette)
             columns = length/rows
+            bw_width = max(self.color_picker_height + 1, width)
             pygame.draw.rect(pick_box,
                              self.get_color(0, palette),
                              pygame.Rect(
-                                 pick_box.get_size()[0] - self.color_picker_height,
+                                 pick_box.get_size()[0] - bw_width,
                                  0,
-                                 self.color_picker_height + 1,
+                                 bw_width + 1,
                                  self.color_picker_height * rows/2))
             pygame.draw.rect(pick_box,
                              self.get_color(-1, palette),
                              pygame.Rect(
-                                 pick_box.get_size()[0] - self.color_picker_height,
+                                 pick_box.get_size()[0] - bw_width,
                                  self.color_picker_height * rows/2,
-                                 self.color_picker_height + 1,
+                                 bw_width + 1,
                                  self.color_picker_height * rows/2))
             for index in range(length):
                 pygame.draw.rect(pick_box,
@@ -380,9 +407,9 @@ class ReflectionPattern:
         """
         if pos is None:
             self.repaint()
+
         else:
             if self.data[pos[0]][pos[1]] is not None and not self.data[pos[0]][pos[1]][4]:
-                self.draw = True
                 if field is None:
                     field = pygame.display.get_surface()
                 value = self.data[pos[0]][pos[1]][0]
@@ -568,7 +595,7 @@ class ReflectionPattern:
             + ', color is (%i, %i, %i) ' %  self.get_color(self.click_color) + '#%i' % self.click_color)
 
 if __name__ == "__main__":
-    game = ReflectionPattern(auto_color=True, base=(21,19), scale=2, timeout=5)
+    game = ReflectionPattern(auto_color=True, base=(71,69), scale=2, timeout=0, paint_auto_steps=False)
     game.execute()
 # 123 119
 # 19  21
