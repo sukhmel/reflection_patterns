@@ -24,8 +24,15 @@ import pygame
 import colorsys
 
 pygame.init()
+pygame.key.set_repeat(500, 200)
 
 class ReflectionPattern:
+
+    EVENT_EXIT    = pygame.USEREVENT
+    EVENT_EXEC    = pygame.USEREVENT + 1
+    EVENT_RESET   = pygame.USEREVENT + 2
+    EVENT_SCALE   = pygame.USEREVENT + 3
+    EVENT_TIMEOUT = pygame.USEREVENT + 4
 
     def __init__(self
                  , base             = (21,19)
@@ -33,7 +40,7 @@ class ReflectionPattern:
                  , pattern          = (True, True, None, True, False)
                  , auto_color       = False
                  , paint_auto_steps = False
-                 , timeout          = 0
+                 , fps          = 0
                  , start_position   = (0,0)
                  , start_direction  = (1, 1)
                  , start_step       = 0
@@ -48,8 +55,7 @@ class ReflectionPattern:
                                 anything convertible to int is color number in palette, (r, g, b) is RGB color value
         :param auto_color:      automatically color field parts based on size or other parameters
         :param paint_auto_steps: repaint after each step of auto colouring
-        :param timeout:         amount of milliseconds used in call to pygame.tyme.wait() before each
-                                field redraw. Real slowdown differs because of drawing speed.
+        :param fps:             approximate desired frames per second in field redraw.
         :param start_position:  initial cell
         :param start_direction: initial direction
         :param start_step:      initial index inside of pattern
@@ -61,12 +67,13 @@ class ReflectionPattern:
         self.in_direction = start_direction
         self.in_position = start_position
         self.in_step    = start_step
-        self.timeout    = timeout
+        self.fps    = fps
         self.base       = base
         self.pattern    = pattern
         self.profile    = profile
         self.auto_color = auto_color
-        self.color_shown= True
+        self.color_shown = True
+        self.delta_resize = 1
         if isinstance(scale, int):
             self.scale  = (scale, scale)
         else:
@@ -161,66 +168,90 @@ class ReflectionPattern:
         self.repaint()
         self.paint_color_picker(picker = not self.color_shown)
 
+    def key_press(self, event):
+        queue = []
+        mod = pygame.key.get_mods()
+
+        if mod & pygame.KMOD_ALT:
+            delta = 5
+        elif mod & pygame.KMOD_CTRL:
+            delta = 10
+        elif mod & pygame.KMOD_SHIFT:
+            delta = 50
+        else:
+            delta = 1
+
+        base = None
+        if event.key == pygame.K_LEFT:
+            base = (max(1, self.base[0] - delta), self.base[1])
+        if event.key == pygame.K_RIGHT:
+            base = (self.base[0] + delta, self.base[1])
+        if event.key == pygame.K_UP:
+            base = (self.base[0], max(1, self.base[1] - delta))
+        if event.key == pygame.K_DOWN:
+            base = (self.base[0], self.base[1] + delta)
+        if base is not None:
+            queue.append(pygame.event.Event(self.EVENT_RESET, {'base': base}))
+
+        scale = None
+        if event.unicode == "+" or event.unicode == "]":
+            scale = (self.scale[0] + 1, self.scale[1] + 1)
+        if event.unicode == "-" or event.unicode == "[":
+            if self.scale[0] > 1 and self.scale[1] > 1:
+                scale = (self.scale[0] - 1, self.scale[1] - 1)
+        if scale is not None:
+            queue.append(pygame.event.Event(self.EVENT_SCALE, {'scale': scale}))
+
+        if event.key == pygame.K_SPACE:
+            self.uncoloured, self.buffer = self.buffer, self.uncoloured
+
+        fps = None
+        if event.unicode == "<":
+            fps = max([0, self.fps - delta])
+        if event.unicode == ">":
+            fps = self.fps + delta
+        if fps is not None:
+            queue.append(pygame.event.Event(self.EVENT_TIMEOUT, {'fps': fps}))
+
+        return queue
+
     def user_input(self, events):
         """
         process input events
         :param events:
         """
+        actions = []
         for event in events:
+
             if  (event.type == pygame.QUIT) or \
                 (event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE):
-                sys.exit(0)
-            if event.type == pygame.KEYDOWN:
-                delta = 1
-                if event.mod == 64:
-                    delta = 100
-                if event.mod == 256:
-                    delta = 10
-                if event.mod == 1:
-                    delta = 50
+                actions += [pygame.event.Event(self.EVENT_EXIT, {})]
 
-                if event.key == pygame.K_LEFT:
-                    self.reset((max(1, self.base[0] - delta), self.base[1]))
-                if event.key == pygame.K_RIGHT:
-                    self.reset((self.base[0] + delta, self.base[1]))
-                if event.key == pygame.K_UP:
-                    self.reset((self.base[0], max(1, self.base[1] - delta)))
-                if event.key == pygame.K_DOWN:
-                    self.reset((self.base[0], self.base[1] + delta))
-                if event.key == pygame.K_KP_PLUS or event.unicode == "]":
-                    self.scale = (self.scale[0] + 1, self.scale[1] + 1)
-                    self.reset(self.base)
-                if event.key == pygame.K_KP_MINUS or event.unicode == "[":
-                    if self.scale[0] > 1 and self.scale[1] > 1:
-                        self.scale = (self.scale[0] - 1, self.scale[1] - 1)
-                        self.reset(self.base)
-                if event.key == pygame.K_SPACE:
-                    self.uncoloured, self.buffer = self.buffer, self.uncoloured
-                if event.unicode == "<":
-                    self.timeout -= 10
-                    self.timeout = max([0, self.timeout])
-                if event.unicode == ">":
-                    self.timeout += 10
-                    self.timeout = min([500, self.timeout])
+            if event.type is pygame.KEYDOWN:
+                actions += self.key_press(event)
 
             if  event.type == pygame.MOUSEBUTTONUP:
-                self.mouse_click(event)
+                actions += self.mouse_click(event)
 
-            if event.type == pygame.USEREVENT + 1:
-                exec("self."+event.do)
+            if event.type == self.EVENT_EXEC:
+                actions += [event]
+
+        return actions
 
     def execute(self):
         """
         start main loop for events and rendering
         """
         while 1:
-            self.user_input(pygame.event.get())
-            if self.timeout > 0:
-                pygame.time.wait( self.timeout )
+            actions = self.user_input(pygame.event.get())
+
+            for event in actions:
+                if event.type is self.EVENT_RESET:
+                    print(event.base)#self.reset(event.base) RESET IS THE PROBLEM. IT DESTROYS KBD STATE
 
             if self.proceed:
                 pos = self.advance()
-                if self.timeout > 0:
+                if self.fps > 0:
                     self.paint(pos, True)
 
             if not self.proceed:
@@ -230,6 +261,8 @@ class ReflectionPattern:
 
                 if not (self.auto_color and self.automatic_colouring(self.paint_auto_steps)):
                     pygame.time.wait(100)
+
+            pygame.time.Clock().tick(self.fps)
 
     def get_color(self, index, palette = None):
         """
@@ -293,10 +326,9 @@ class ReflectionPattern:
 
             if self.profile:
                 if self.profile_string is not None:
-                    exec(self.profile_string)
+                    pygame.event.post(pygame.event.Event(self.EVENT_EXEC, {'do': self.profile_string}))
 
-                event = pygame.event.Event(pygame.QUIT)
-                pygame.event.post(event)
+                pygame.event.post(pygame.event.Event(pygame.QUIT))
 
         temp = self.position
         self.position = new_position
@@ -536,7 +568,7 @@ class ReflectionPattern:
             raise TypeError('Either on-screen coordinates or field point coordinates must be specified')
 
         if point is None:
-            place = (int(pos[0]/self.scale[0]), int(pos[1]/self.scale[1]))
+            place = (int(pos[0]/self.scale[0]) % self.size[0], int(pos[1]/self.scale[1]) % self.size[1])
             value = (self.data[place[0]][place[1]][0] == -1 and [-1] or [1])[0]
             # top's value is index of corresponding color in data; 2 is top, 3 is bottom
             top = ((0 < pos[0] % self.scale[0] - value*(pos[1] % self.scale[1]) < sum(self.scale)/2) and [2] or [3])[0]
@@ -595,7 +627,7 @@ class ReflectionPattern:
             + ', color is (%i, %i, %i) ' %  self.get_color(self.click_color) + '#%i' % self.click_color)
 
 if __name__ == "__main__":
-    game = ReflectionPattern(auto_color=True, base=(71,69), scale=2, timeout=0, paint_auto_steps=False)
+    game = ReflectionPattern(auto_color=True, base=(81, 79), scale=6, fps=0, paint_auto_steps=True)
     game.execute()
 # 123 119
 # 19  21
