@@ -30,9 +30,9 @@ class ReflectionPattern:
 
     EVENT_EXIT    = pygame.USEREVENT
     EVENT_EXEC    = pygame.USEREVENT + 1
-    EVENT_RESET   = pygame.USEREVENT + 2
-    EVENT_SCALE   = pygame.USEREVENT + 3
-    EVENT_TIMEOUT = pygame.USEREVENT + 4
+    EVENT_RESIZE  = pygame.USEREVENT + 2
+    EVENT_RESCALE = pygame.USEREVENT + 3
+    EVENT_SET_FPS = pygame.USEREVENT + 4
 
     def __init__(self
                  , base             = (21,19)
@@ -67,7 +67,7 @@ class ReflectionPattern:
         self.in_direction = start_direction
         self.in_position = start_position
         self.in_step    = start_step
-        self.fps    = fps
+        self.fps        = fps
         self.base       = base
         self.pattern    = pattern
         self.profile    = profile
@@ -119,6 +119,62 @@ class ReflectionPattern:
         self.size = (1, 1)
         self.reset(force = True)
 
+    def resize(self, base = None, size = None):
+        if size is not None:
+            if pygame.display.get_surface() is None:
+                mods = pygame.key.get_mods()
+                pygame.display.set_mode(size, pygame.RESIZABLE) # HOW DOES THIS WORK!?
+                pygame.key.set_mods(mods)
+                field = pygame.Surface(pygame.display.get_surface().get_size()).convert()
+                field.fill(self.get_color(self.back_color))
+                pygame.display.get_surface().blit(field, (0, 0))
+                pygame.display.flip()
+            else:
+                pygame.event.post(pygame.event.Event(pygame.VIDEORESIZE, {'size': size}))
+                # ???????
+
+        elif base is not None:
+            self.base = base
+            # clear all drawing data that relies on field size
+            # list comprehension is used to correctly fill an array with copies, not references
+            self.data = [[[0, # line type: 0 - no line, 1 is \, -1 is /
+                           self.get_color(self.fore_color), # line color
+                           self.get_color(self.back_color), # upper color
+                           self.get_color(self.back_color), # lower color
+                           False]                           # is rendered
+                          for y in range(self.base[1])]
+                         for x in range(self.base[0])]
+
+            # information for auto-colouring
+            self.uncoloured = set()
+            for x in range(self.base[0]):
+                for y in range(self.base[1]):
+                    for z in (2, 3):
+                        self.uncoloured.add((x, y, z))
+
+            # all input values are reset to defaults
+            self.direction = list(self.in_direction)
+            self.position = self.in_position
+            self.patt_step = self.in_step
+
+            # pattern generation is restarted
+            self.proceed = True
+            self.resize()
+
+        else:
+            # display size with respect to scale
+            size = (self.base[0] * self.scale[0],
+                    self.base[1] * self.scale[1])
+
+            if size != self.size:
+                self.size = size
+                self.draw = True
+                self.set_caption()
+
+                rows = (self.color_shown and [1] or [self.color_picker_rows])[0]
+                self.resize(size=(self.size[0], self.size[1] + self.color_picker_height * rows))
+                self.paint_color_picker(picker = not self.color_shown)
+
     def reset(self, new_base = None, force = False):
         """
         reset field parameters, restart calculating if necessary, otherwise continue
@@ -127,46 +183,18 @@ class ReflectionPattern:
         """
         if self.base != new_base or force:
             if new_base is not None:
-                self.base = new_base
-            self.proceed = True
+                self.resize(new_base)
+            else:
+                self.reset(self.base, force=force)
 
-            self.data = []  # list comprehension is used to correctly fill an array with copies, not references
-            self.data = [[[0,                               # line type: 0 - no line, 1 is \, -1 is /
-                           self.get_color(self.fore_color), # line color
-                           self.get_color(self.back_color),   # upper color
-                           self.get_color(self.back_color),   # lower color
-                           False]                           # is rendered
-                            for y in range(self.base[1])]
-                            for x in range(self.base[0])]
-
-            self.uncoloured = set()
-            for x in range(self.base[0]):
-                for y in range(self.base[1]):
-                    for z in (2, 3):
-                        self.uncoloured.add((x, y, z))
-
-
-            self.direction  = list(self.in_direction)
-            self.position   = self.in_position
-            self.patt_step  = self.in_step
-        else:
+        else:   # only redraw is necessary
             for y in range(self.base[1]):
                 for x in range(self.base[0]):
                     self.data[x][y][4] = False
 
-        self.draw = True
-        self.size = (self.base[0]*self.scale[0],
-                     self.base[1]*self.scale[1])
-        rows = (self.color_shown and [1] or [self.color_picker_rows])[0]
-        pygame.display.set_mode((self.size[0], self.size[1] + self.color_picker_height * rows))
-        field = pygame.Surface(pygame.display.get_surface().get_size())
-        field = field.convert()
-        field.fill(self.get_color(self.back_color))
-        pygame.display.get_surface().blit(field, (0, 0))
-        pygame.display.flip()
-        self.set_caption()
-        self.repaint()
-        self.paint_color_picker(picker = not self.color_shown)
+        self.resize()
+        #self.repaint()
+
 
     def key_press(self, event):
         queue = []
@@ -191,7 +219,7 @@ class ReflectionPattern:
         if event.key == pygame.K_DOWN:
             base = (self.base[0], self.base[1] + delta)
         if base is not None:
-            queue.append(pygame.event.Event(self.EVENT_RESET, {'base': base}))
+            queue.append(pygame.event.Event(self.EVENT_RESIZE, {'base': base}))
 
         scale = None
         if event.unicode == "+" or event.unicode == "]":
@@ -200,7 +228,7 @@ class ReflectionPattern:
             if self.scale[0] > 1 and self.scale[1] > 1:
                 scale = (self.scale[0] - 1, self.scale[1] - 1)
         if scale is not None:
-            queue.append(pygame.event.Event(self.EVENT_SCALE, {'scale': scale}))
+            queue.append(pygame.event.Event(self.EVENT_RESCALE, {'scale': scale}))
 
         if event.key == pygame.K_SPACE:
             self.uncoloured, self.buffer = self.buffer, self.uncoloured
@@ -211,7 +239,7 @@ class ReflectionPattern:
         if event.unicode == ">":
             fps = self.fps + delta
         if fps is not None:
-            queue.append(pygame.event.Event(self.EVENT_TIMEOUT, {'fps': fps}))
+            queue.append(pygame.event.Event(self.EVENT_SET_FPS, {'fps': fps}))
 
         return queue
 
@@ -224,7 +252,7 @@ class ReflectionPattern:
         for event in events:
 
             if  (event.type == pygame.QUIT) or \
-                (event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE):
+                (event.type == pygame.KEYDOWN and event.key in [pygame.K_ESCAPE, pygame.K_q]):
                 actions += [pygame.event.Event(self.EVENT_EXIT, {})]
 
             if event.type is pygame.KEYDOWN:
@@ -246,8 +274,15 @@ class ReflectionPattern:
             actions = self.user_input(pygame.event.get())
 
             for event in actions:
-                if event.type is self.EVENT_RESET:
-                    print(event.base)#self.reset(event.base) RESET IS THE PROBLEM. IT DESTROYS KBD STATE
+                if event.type is self.EVENT_RESIZE:
+                    self.resize(event.base)
+                if event.type is self.EVENT_EXIT:
+                    sys.exit(0)
+                if event.type is self.EVENT_SET_FPS:
+                    self.fps = event.fps
+                if event.type is self.EVENT_RESCALE:
+                    self.scale = event.scale
+                    self.reset()
 
             if self.proceed:
                 pos = self.advance()
@@ -388,7 +423,7 @@ class ReflectionPattern:
             rows = 1
         size = (self.size[0], self.size[1] + self.color_picker_height * rows)
         if pygame.display.get_surface().get_size() != size:
-            pygame.display.set_mode(size)
+            self.resize(size=size)
 
         pick_box = pygame.Surface((self.size[0], self.color_picker_height * rows)).convert()
 
@@ -497,6 +532,7 @@ class ReflectionPattern:
         :param event:
         :return:
         """
+        actions = []
         if event.button == 4:
             self.change_click_color(+1)
         if event.button == 5:
@@ -516,6 +552,7 @@ class ReflectionPattern:
                         self.palette.index(pygame.display.get_surface().get_at(event.pos)[:-1]))
                 else:
                     self.color_shown = self.paint_color_picker(picker = self.color_shown)
+        return actions
 
     def get_adjacent_to(self, pos, direction):
         """
