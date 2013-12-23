@@ -26,13 +26,14 @@ import colorsys
 pygame.init()
 pygame.key.set_repeat(500, 200)
 
-class ReflectionPattern:
 
+class ReflectionPattern:
     EVENT_EXIT    = pygame.USEREVENT
     EVENT_EXEC    = pygame.USEREVENT + 1
     EVENT_RESIZE  = pygame.USEREVENT + 2
     EVENT_RESCALE = pygame.USEREVENT + 3
     EVENT_SET_FPS = pygame.USEREVENT + 4
+    EVENT_REBASE = pygame.USEREVENT + 5
 
     def __init__(self
                  , base             = (21,19)
@@ -109,6 +110,7 @@ class ReflectionPattern:
 
         self.color_picker_height = 8
         self.color_picker_rows   = sat_range
+        self.new_base = None
         self.proceed = True
         self.draw    = True
 
@@ -117,21 +119,17 @@ class ReflectionPattern:
         self.data = [] # [ [1(\),0( ),-1(/)], line color, top color, bottom color, is rendered flag
 
         self.size = (1, 1)
-        self.reset(force = True)
+        self.reset(force=True)
 
-    def resize(self, base = None, size = None):
+    def resize(self, base=None, size=None):
         if size is not None:
-            if pygame.display.get_surface() is None:
-                mods = pygame.key.get_mods()
-                pygame.display.set_mode(size, pygame.RESIZABLE) # HOW DOES THIS WORK!?
-                pygame.key.set_mods(mods)
-                field = pygame.Surface(pygame.display.get_surface().get_size()).convert()
-                field.fill(self.get_color(self.back_color))
-                pygame.display.get_surface().blit(field, (0, 0))
-                pygame.display.flip()
-            else:
-                pygame.event.post(pygame.event.Event(pygame.VIDEORESIZE, {'size': size}))
-                # ???????
+            mods = pygame.key.get_mods()
+            pygame.display.set_mode(size) # HOW DOES THIS WORK!?
+            pygame.key.set_mods(mods)
+            field = pygame.Surface(pygame.display.get_surface().get_size()).convert()
+            field.fill(self.get_color(self.back_color))
+            pygame.display.get_surface().blit(field, (0, 0))
+            pygame.display.flip()
 
         elif base is not None:
             self.base = base
@@ -210,16 +208,17 @@ class ReflectionPattern:
             delta = 1
 
         base = None
+        start = (self.new_base is None and [self.base] or [self.new_base])[0]
         if event.key == pygame.K_LEFT:
-            base = (max(1, self.base[0] - delta), self.base[1])
+            base = (max(1, start[0] - delta), start[1])
         if event.key == pygame.K_RIGHT:
-            base = (self.base[0] + delta, self.base[1])
+            base = (start[0] + delta, start[1])
         if event.key == pygame.K_UP:
-            base = (self.base[0], max(1, self.base[1] - delta))
+            base = (start[0], max(1, start[1] - delta))
         if event.key == pygame.K_DOWN:
-            base = (self.base[0], self.base[1] + delta)
+            base = (start[0], start[1] + delta)
         if base is not None:
-            queue.append(pygame.event.Event(self.EVENT_RESIZE, {'base': base}))
+            queue.append(pygame.event.Event(self.EVENT_REBASE, {'base': base}))
 
         scale = None
         if event.unicode == "+" or event.unicode == "]":
@@ -258,6 +257,9 @@ class ReflectionPattern:
             if event.type is pygame.KEYDOWN:
                 actions += self.key_press(event)
 
+            if event.type is pygame.KEYUP and sum(pygame.key.get_pressed()) == 0:
+                actions += [pygame.event.Event(self.EVENT_RESIZE, {})]
+
             if  event.type == pygame.MOUSEBUTTONUP:
                 actions += self.mouse_click(event)
 
@@ -275,7 +277,8 @@ class ReflectionPattern:
 
             for event in actions:
                 if event.type is self.EVENT_RESIZE:
-                    self.resize(event.base)
+                    self.resize(self.new_base)
+                    self.new_base = None
                 if event.type is self.EVENT_EXIT:
                     sys.exit(0)
                 if event.type is self.EVENT_SET_FPS:
@@ -283,6 +286,9 @@ class ReflectionPattern:
                 if event.type is self.EVENT_RESCALE:
                     self.scale = event.scale
                     self.reset()
+                if event.type is self.EVENT_REBASE:
+                    self.new_base = event.base
+                    self.set_caption()
 
             if self.proceed:
                 pos = self.advance()
@@ -659,8 +665,9 @@ class ReflectionPattern:
         self.color_shown = self.paint_color_picker(False)
 
     def set_caption(self):
+        base = (self.new_base is None and [self.base] or [self.new_base])[0]
         pygame.display.set_caption(
-            '%i x %i ' % self.base + '@ (%i, %i) ' % self.scale
+            '%i x %i ' % base + '@ (%i, %i) ' % self.scale
             + ', color is (%i, %i, %i) ' %  self.get_color(self.click_color) + '#%i' % self.click_color)
 
 if __name__ == "__main__":
